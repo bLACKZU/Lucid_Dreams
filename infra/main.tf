@@ -105,3 +105,27 @@ module "lb_controller_irsa" {
 
   tags = var.tags
 }
+
+
+resource "aws_iam_policy" "lb_controller_extra" {
+  name = "${local.cluster_name}-lb-controller-extra"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "elasticloadbalancing:DescribeListenerAttributes",
+        "elasticloadbalancing:ModifyListenerAttributes",
+      ]
+      Resource = "*"
+    }]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "lb_controller_extra" {
+  role       = module.lb_controller_irsa.iam_role_name
+  policy_arn = aws_iam_policy.lb_controller_extra.arn
+}
