@@ -12,26 +12,20 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  # The cluster name carries a random suffix from Terraform, so it is
-  # discovered at runtime by prefix rather than hardcoded here.
-  CLUSTER_PREFIX: hello-world
-  NAMESPACE: hello-world
-  RELEASE_NAME: hello-world
+  CLUSTER_PREFIX: hello-world # matches var.cluster_name in infra/
+  APP: hello-world # Helm release name and namespace
+  IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/hello-world:${{ github.sha }}
 
 jobs:
   deploy:
-    name: Build image and deploy to EKS
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -41,127 +35,77 @@ jobs:
         with:
           context: .
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/hello-world:${{ github.sha }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/hello-world:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ env.IMAGE }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
+      - uses: azure/setup-kubectl@v4
 
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v4
 
-      - name: Discover EKS cluster
+      # The cluster name carries a random suffix from Terraform, so look it
+      # up by prefix instead of hardcoding it.
+      - name: Connect to EKS
         run: |
-          set -euo pipefail
+          CLUSTER=$(aws eks list-clusters \
+            --query "clusters[?starts_with(@, '$CLUSTER_PREFIX')] | [0]" --output text)
 
-          CLUSTER_NAME=$(aws eks list-clusters --region "$AWS_REGION" \
-            --query "clusters[?starts_with(@, '${CLUSTER_PREFIX}')] | [0]" \
-            --output text)
-
-          if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" = "None" ]; then
-            echo "::error::No EKS cluster found with prefix '${CLUSTER_PREFIX}' in ${AWS_REGION}."
-            echo "::error::Provision the infrastructure first (terraform apply in infra/)."
+          if [ -z "$CLUSTER" ] || [ "$CLUSTER" = "None" ]; then
+            echo "::error::No EKS cluster starting with '$CLUSTER_PREFIX' in $AWS_REGION. Run terraform apply first."
             exit 1
           fi
 
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          VPC_ID=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" \
+          aws eks update-kubeconfig --name "$CLUSTER"
+
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          VPC=$(aws eks describe-cluster --name "$CLUSTER" \
             --query 'cluster.resourcesVpcConfig.vpcId' --output text)
 
-          echo "CLUSTER_NAME=$CLUSTER_NAME"                                              >> "$GITHUB_ENV"
-          echo "VPC_ID=$VPC_ID"                                                          >> "$GITHUB_ENV"
-          echo "LB_ROLE_ARN=arn:aws:iam::${ACCOUNT_ID}:role/${CLUSTER_NAME}-lb-controller" >> "$GITHUB_ENV"
+          echo "CLUSTER=$CLUSTER" >> "$GITHUB_ENV"
+          echo "VPC=$VPC" >> "$GITHUB_ENV"
+          echo "LB_ROLE_ARN=arn:aws:iam::$ACCOUNT:role/$CLUSTER-lb-controller" >> "$GITHUB_ENV"
 
-          echo "Found cluster: $CLUSTER_NAME (vpc: $VPC_ID)"
-
-      - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
-          kubectl get nodes
-
+      # Service account name/namespace must match the IRSA trust policy in
+      # infra/main.tf (kube-system:aws-load-balancer-controller).
       - name: Install AWS Load Balancer Controller
         run: |
-          set -euo pipefail
-
           helm repo add eks https://aws.github.io/eks-charts
           helm repo update
 
-          # The service account name/namespace must match the IRSA trust
-          # policy created in Terraform (kube-system:aws-load-balancer-controller).
           helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
             --namespace kube-system \
-            --set clusterName="$CLUSTER_NAME" \
+            --set clusterName="$CLUSTER" \
             --set region="$AWS_REGION" \
-            --set vpcId="$VPC_ID" \
-            --set serviceAccount.create=true \
+            --set vpcId="$VPC" \
             --set serviceAccount.name=aws-load-balancer-controller \
             --set-string serviceAccount.annotations."eks\.amazonaws\.com/role-arn"="$LB_ROLE_ARN" \
-            --set createIngressClassResource=true \
-            --set ingressClass=alb \
             --wait --timeout 10m
 
       - name: Deploy hello-world
         run: |
-          set -euo pipefail
-
-          helm upgrade --install "$RELEASE_NAME" ./charts/hello-world \
-            --namespace "$NAMESPACE" --create-namespace \
+          helm upgrade --install "$APP" ./charts/hello-world \
+            --namespace "$APP" --create-namespace \
             --set image.repository="${{ secrets.DOCKERHUB_USERNAME }}/hello-world" \
             --set image.tag="${{ github.sha }}" \
             --wait --timeout 5m
 
-      - name: Wait for ALB and report URL
+      - name: Print URL
         run: |
-          set -euo pipefail
-
-          echo "Waiting for the ALB to be provisioned..."
-          ADDRESS=""
-          for _ in $(seq 1 60); do
-            ADDRESS=$(kubectl get ingress "$RELEASE_NAME" -n "$NAMESPACE" \
+          for _ in $(seq 60); do
+            ADDRESS=$(kubectl get ingress "$APP" -n "$APP" \
               -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-            [ -n "$ADDRESS" ] && break
+            if [ -n "$ADDRESS" ]; then break; fi
             sleep 10
           done
 
           if [ -z "$ADDRESS" ]; then
-            echo "::warning::ALB address not published yet. Check: kubectl describe ingress $RELEASE_NAME -n $NAMESPACE"
-            kubectl describe ingress "$RELEASE_NAME" -n "$NAMESPACE" || true
+            echo "::warning::ALB address not published yet."
+            kubectl describe ingress "$APP" -n "$APP"
             exit 0
           fi
 
-          echo "Ingress address: $ADDRESS"
-
-          # The ALB returns 5xx for a short window while its target group
-          # finishes its first health checks, so poll rather than curl once.
-          echo "Waiting for the endpoint to serve traffic..."
-          for _ in $(seq 1 30); do
-            BODY=$(curl -fsS --max-time 5 "http://${ADDRESS}" 2>/dev/null || true)
-            if [ "$BODY" = "Hello World" ]; then
-              echo "Endpoint is live and returned: $BODY"
-              break
-            fi
-            sleep 10
-          done
-
-          {
-            echo "### Deployment complete"
-            echo ""
-            echo "**Cluster:** \`${CLUSTER_NAME}\`"
-            echo "**Image:** \`${{ secrets.DOCKERHUB_USERNAME }}/hello-world:${{ github.sha }}\`"
-            echo "**URL:** http://${ADDRESS}"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Show deployed resources
-        if: always()
-        run: |
-          kubectl get all,ingress -n "$NAMESPACE" || true
+          echo "URL: http://$ADDRESS" | tee -a "$GITHUB_STEP_SUMMARY"
