@@ -1,0 +1,10 @@
+# Copy to backend.hcl and set your own bucket name, then run:
+#   terraform init -backend-config=backend.hcl
+#
+# backend.hcl is gitignored because these values are account-specific.
+# S3 bucket names are globally unique, so you need your own -- see the
+# README for the one-time commands that create it.
+
+bucket = "hello-world-tfstate-<YOUR-AWS-ACCOUNT-ID>"
+key    = "hello-world/terraform.tfstate"
+region = "us-east-1"
