@@ -96,51 +96,81 @@ jobs:
             --set image.tag="${{ github.sha }}" \
             --wait --timeout 5m
 
-      - name: Report URL
+      - name: Install monitoring
         run: |
-          for _ in $(seq 60); do
-            ADDRESS=$(kubectl get ingress "$APP" -n "$APP" \
-              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-            if [ -n "$ADDRESS" ]; then break; fi
-            sleep 5
-          done
+          if helm status monitoring -n monitoring >/dev/null 2>&1; then
+            echo "Already installed - skipping."
+            exit 0
+          fi
 
-          if [ -z "$ADDRESS" ]; then
-            echo "*error*Ingress never got an address - the load balancer controller could not provision the ALB."
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+          helm install monitoring prometheus-community/kube-prometheus-stack \
+            --namespace monitoring --create-namespace \
+            -f monitoring/values.yaml \
+            --set grafana.adminPassword="${{ secrets.GRAFANA_ADMIN_PASSWORD || 'admin' }}" \
+            --wait --timeout 15m
+
+      - name: Report URLs
+        run: |
+          # Polls an Ingress until the ALB publishes its hostname.
+          wait_for_address() {
+            local addr=""
+            for _ in $(seq 60); do
+              addr=$(kubectl get ingress "$1" -n "$2" \
+                -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+              if [ -n "$addr" ]; then break; fi
+              sleep 5
+            done
+            echo "$addr"
+          }
+
+          APP_ADDR=$(wait_for_address "$APP" "$APP")
+
+          if [ -z "$APP_ADDR" ]; then
+            echo "::error::Ingress never got an address - the load balancer controller could not provision the ALB."
             kubectl describe ingress "$APP" -n "$APP"
             kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --tail=30
             exit 1
           fi
 
-          URL="http://$ADDRESS"
-          echo "*info*Ingress address: $ADDRESS"
+          APP_URL="http://$APP_ADDR"
 
+          # The ALB 5xx's until its target group passes its first health
+          # checks, so confirm it really serves before calling this a success.
           for _ in $(seq 60); do
-            BODY=$(curl -fsS --max-time 5 "$URL" 2>/dev/null || true)
+            BODY=$(curl -fsS --max-time 5 "$APP_URL" 2>/dev/null || true)
             if [ "$BODY" = "Hello World" ]; then break; fi
             sleep 5
           done
 
           if [ "$BODY" != "Hello World" ]; then
-            echo "*error*$URL did not return \"Hello World\" (last response: '${BODY:-no response}')."
+            echo "::error::$APP_URL did not return \"Hello World\" (last response: '${BODY:-no response}')."
             exit 1
           fi
+
+          GRAFANA_ADDR=$(wait_for_address monitoring-grafana monitoring)
+          PROM_ADDR=$(wait_for_address monitoring-kube-prometheus-prometheus monitoring)
 
           {
             echo "## Deployed"
             echo ""
-            echo "**URL:** $URL"
+            echo "| Service | URL |"
+            echo "|---|---|"
+            echo "| Hello World | http://$APP_ADDR |"
+            if [ -n "$GRAFANA_ADDR" ]; then echo "| Grafana | http://$GRAFANA_ADDR |"; fi
+            if [ -n "$PROM_ADDR" ]; then echo "| Prometheus | http://$PROM_ADDR |"; fi
             echo ""
-            echo '```'
-            echo "curl $URL"
-            echo "Hello World"
-            echo '```'
+            echo "Grafana login: \`admin\` / value of the \`GRAFANA_ADMIN_PASSWORD\` secret (\`admin\` if unset)."
+            echo "Dashboards: **Dashboards -> General** has the pre-built Kubernetes cluster, node and pod views."
             echo ""
             echo "| | |"
             echo "|---|---|"
             echo "| Cluster | \`$CLUSTER\` |"
             echo "| Image | \`$IMAGE\` |"
-            echo "| Namespace | \`$APP\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "*info*$URL is live and returned: $BODY"
+          echo "App:        $APP_URL"
+          echo "Grafana:    http://${GRAFANA_ADDR:-not-ready}"
+          echo "Prometheus: http://${PROM_ADDR:-not-ready}"
