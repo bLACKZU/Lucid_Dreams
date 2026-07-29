@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-#
-# Creates the S3 bucket that holds Terraform state, then writes infra/backend.hcl.
-#
-# Terraform cannot create its own backend bucket -- `terraform init` connects to
-# it before any resource exists -- so this runs once per AWS account, before the
-# first init. Safe to re-run: it skips creation if the bucket is already there.
-#
-# Usage:  ./scripts/bootstrap.sh          (defaults to us-east-1)
-#         AWS_REGION=eu-west-1 ./scripts/bootstrap.sh
 
 set -euo pipefail
 
