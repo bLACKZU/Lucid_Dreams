@@ -12,9 +12,6 @@ grafana:
       alb.ingress.kubernetes.io/target-type: ip
       alb.ingress.kubernetes.io/healthcheck-path: /api/health
 
-  # Grafana sits around 250Mi once the bundled dashboards are loaded. A 256Mi
-  # limit left it GC-thrashing at the ceiling, too slow to answer its own
-  # health probe, so it kept dropping out of the ALB target group with 503s.
   resources:
     requests:
       cpu: 50m
