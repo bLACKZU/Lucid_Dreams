@@ -38,6 +38,8 @@ module "vpc" {
   single_nat_gateway   = var.single_nat_gateway
   enable_dns_hostnames = true
 
+  # Used by the AWS Load Balancer Controller to auto-discover which subnets
+  # to place an ALB in.
   public_subnet_tags = {
     "kubernetes.io/role/elb" = 1
   }

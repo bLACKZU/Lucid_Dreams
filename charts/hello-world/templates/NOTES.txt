@@ -1,0 +1,16 @@
+Hello World has been deployed.
+
+{{- if .Values.ingress.enabled }}
+The AWS Load Balancer Controller will provision an ALB for this Ingress.
+It can take a minute or two to become reachable. Get its address with:
+  kubectl get ingress {{ include "hello-world.fullname" . }} -n {{ .Release.Namespace }} -w
+
+Then:
+  curl http://<ADDRESS-shown-above>
+{{- else }}
+Run this to reach it locally:
+  kubectl port-forward svc/{{ include "hello-world.fullname" . }} 8080:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+
+Then, in another terminal:
+  curl http://localhost:8080
+{{- end }}

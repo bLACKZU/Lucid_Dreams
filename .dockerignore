@@ -1,0 +1,8 @@
+.git
+.github
+infra
+charts
+README.md
+**/__pycache__
+**/*.pyc
+**/.venv
