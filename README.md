@@ -3,9 +3,6 @@
 Hello World microservice on Amazon EKS. Terraform for infrastructure, Helm for
 the workload, GitHub Actions to build and deploy.
 
-Evidence screenshots of the running app and the Grafana dashboards are in
-[`screenshots/`](screenshots/).
-
 ## Prerequisites
 
 - AWS credentials configured (`aws configure`)
@@ -68,3 +65,21 @@ app, Grafana and Prometheus.
 
 Uninstalls the Helm releases, waits for the load balancers to be removed, runs
 `terraform destroy`, and deletes the state bucket.
+
+## Screenshots
+
+**The application, served through an internet-facing ALB**
+
+![Hello World endpoint](screenshots/webpage.png)
+
+**Cluster monitoring** — CPU and memory across the cluster
+
+![Cluster monitoring](screenshots/cluster_monitoring.png)
+
+**Service monitoring** — the `hello-world` namespace, both replicas
+
+![Service monitoring](screenshots/service_monitoring.png)
+
+**Node monitoring** — per-node resource usage
+
+![Node monitoring](screenshots/node_monitoring.png)
