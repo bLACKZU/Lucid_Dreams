@@ -99,18 +99,15 @@ echo "Deleting the Terraform state bucket: $BUCKET"
 if aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
   # Versioning is on, so every object version and delete marker has to go
   # before the bucket itself can be removed.
-  aws s3api list-object-versions --bucket "$BUCKET" --output text \
-    --query 'Versions[].[Key,VersionId]' 2>/dev/null | while read -r key vid; do
-    if [ -n "$key" ]; then
-      aws s3api delete-object --bucket "$BUCKET" --key "$key" --version-id "$vid" >/dev/null
-    fi
-  done
-
-  aws s3api list-object-versions --bucket "$BUCKET" --output text \
-    --query 'DeleteMarkers[].[Key,VersionId]' 2>/dev/null | while read -r key vid; do
-    if [ -n "$key" ]; then
-      aws s3api delete-object --bucket "$BUCKET" --key "$key" --version-id "$vid" >/dev/null
-    fi
+  # tr -d '\r' matters: the AWS CLI on Windows emits CRLF, which would leave a
+  # carriage return on the version id and S3 rejects it as invalid.
+  for q in 'Versions[].[Key,VersionId]' 'DeleteMarkers[].[Key,VersionId]'; do
+    aws s3api list-object-versions --bucket "$BUCKET" --output text \
+      --query "$q" 2>/dev/null | tr -d '\r' | while read -r key vid; do
+      if [ -n "$key" ] && [ -n "$vid" ]; then
+        aws s3api delete-object --bucket "$BUCKET" --key "$key" --version-id "$vid" >/dev/null
+      fi
+    done
   done
 
   aws s3api delete-bucket --bucket "$BUCKET" --region "$REGION"
