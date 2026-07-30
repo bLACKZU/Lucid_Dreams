@@ -11,7 +11,6 @@ if ($LASTEXITCODE -ne 0 -or -not $AccountId) {
 }
 $Bucket = "hello-world-tfstate-$AccountId"
 
-# ---------------------------------------------------------------- kubernetes
 
 $Cluster = aws eks list-clusters --region $Region `
     --query "clusters[?starts_with(@, '$ClusterPrefix')] | [0]" --output text
@@ -72,7 +71,6 @@ if ($Vpc -and $Vpc -ne "None") {
     }
 }
 
-# ---------------------------------------------------------------- terraform
 
 Write-Host ""
 Write-Host "Running terraform destroy..."
@@ -83,9 +81,6 @@ try {
 } finally {
     Pop-Location
 }
-
-# ------------------------------------------------------------- state bucket
-# Last, because Terraform reads and writes this bucket throughout the destroy.
 
 Write-Host ""
 Write-Host "Deleting the Terraform state bucket: $Bucket"

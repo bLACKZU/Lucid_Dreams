@@ -1,16 +1,3 @@
-#!/usr/bin/env bash
-#
-# Tears everything down in the right order.
-#
-# The ALBs are created by the load balancer controller, not by Terraform, so
-# Terraform has no idea they exist. Destroying first leaves their network
-# interfaces attached to the subnets and the VPC deletion fails with a
-# DependencyViolation. Removing the Ingresses makes the controller delete the
-# ALBs, leaving a clean VPC for Terraform.
-#
-# Usage:  ./scripts/destroy.sh                 (Terraform will prompt)
-#         ./scripts/destroy.sh -auto-approve   (no prompt)
-
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
@@ -22,7 +9,6 @@ INFRA_DIR="${SCRIPT_DIR}/../infra"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 BUCKET="hello-world-tfstate-${ACCOUNT_ID}"
 
-# ---------------------------------------------------------------- kubernetes
 
 CLUSTER=$(aws eks list-clusters --region "$REGION" \
   --query "clusters[?starts_with(@, '$CLUSTER_PREFIX')] | [0]" \
@@ -83,24 +69,19 @@ if [ -n "$VPC" ] && [ "$VPC" != "None" ]; then
   done
 fi
 
-# ---------------------------------------------------------------- terraform
-
 echo
 echo "Running terraform destroy..."
 cd "$INFRA_DIR"
 terraform destroy "$@"
 
-# ------------------------------------------------------------- state bucket
-# Last, because Terraform reads and writes this bucket throughout the destroy.
 
 echo
 echo "Deleting the Terraform state bucket: $BUCKET"
 
 if aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
-  # Versioning is on, so every object version and delete marker has to go
-  # before the bucket itself can be removed.
-  # tr -d '\r' matters: the AWS CLI on Windows emits CRLF, which would leave a
-  # carriage return on the version id and S3 rejects it as invalid.
+ 
+    # Versioning is on, so every object version and delete marker has to go
+    # before the bucket itself can be removed.
   for q in 'Versions[].[Key,VersionId]' 'DeleteMarkers[].[Key,VersionId]'; do
     aws s3api list-object-versions --bucket "$BUCKET" --output text \
       --query "$q" 2>/dev/null | tr -d '\r' | while read -r key vid; do

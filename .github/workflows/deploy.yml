@@ -35,7 +35,11 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.IMAGE }}
+          # The SHA tag is what gets deployed. :latest exists so the chart's
+          # default works for a standalone `helm install`.
+          tags: |
+            ${{ env.IMAGE }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/hello-world:latest
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
